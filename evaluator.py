@@ -1,100 +1,82 @@
-import json
-from langchain import LLMChain
-from langchain.prompts import PromptTemplate
-from langchain.chains import TransformChain
+from langchain.llms import OpenAI
 from langchain_experimental.utilities import PythonREPL
+import json
 
-# Define the prompt template for general questions
-general_prompt_template = """
-You are a Computer Science professor. Based on the question, ground truth answer, and answer categories, assign a score and provide reasoning.
-Question: {question}
-Ground truth answer: {ground_truth}
-Answer categories: {answer_categories}
-Using the rubrics, evaluate the answer and provide the score and reasoning.
-Answer: {answer}
-Score:
-Reasoning:
-"""
+llm = llm
 
-# Define the prompt template for programming questions
-programming_prompt_template = """
-You are a programming expert. Evaluate the provided code based on the question, ground truth code, and answer categories, assign a score and provide reasoning.
-Question: {question}
-Ground truth code: {ground_truth}
-Answer categories: {answer_categories}
-Using the rubrics, evaluate the code and provide the score and reasoning.
-Code:
-{code}
-Score:
-Reasoning:
-"""
-
-def evaluate(json_file_path):
-    with open(json_file_path, 'r') as file:
-        data = json.load(file)
-
-    question_id = data["Question_ID"]
-    question_type = data["Question_type"]
-    question = data["Question"]
-    answer_categories = data["Answer_Categories"]
-    ground_truth = data["Ground_truth_answer"]
-
-    # Prepare the answer categories string
-    answer_categories_str = "\n".join([f"{category[0]}: {category[1]} (Score: {category[2]})" for category in answer_categories])
-    
-    if question_type == "Programming":
-        # Initialize PythonREPL
-        repl = PythonREPL()
-
-        # Execute the code
-        execution_result = repl.run(ground_truth)
+def evaluate(answer: str, evaluation_data: dict, ground_truth_answer: str):
         
-        # Format the prompt
-        prompt = programming_prompt_template.format(
-            question=question,
-            ground_truth=ground_truth,
-            answer_categories=answer_categories_str,
-            code=execution_result
-        )
+    question_id = evaluation_data['Question_ID']
+    question = evaluation_data['Question']
+    question_type = evaluation_data['Question type']
+    answer_categories = evaluation_data['Answer_Categories']
 
-        # Create an LLM chain for programming evaluation
-        llm_chain = LLMChain(
-            prompt=PromptTemplate.from_template(programming_prompt_template),
-            llm="text-davinci-003"  # replace with your preferred LLM model
-        )
+    if question_type.lower() == 'programming':
+        repl = PythonREPL()
+        code_execution_result = repl.run(answer)
+        prompt = f"""
+        You are a computer science professor evaluating a programming answer. 
+        The question is: {question}
+        The ground truth answer is: {ground_truth_answer}
+        The answer provided by the student is: {answer}
+        The result of the code execution is: {code_execution_result}
+
+        Based on the following categories and their rubrics:
+        {json.dumps(answer_categories, indent=2)}
+
+        Evaluate the student's answer and return a markdown code snippet with a JSON object formatted to look like:
+        ```json
+        {{
+          "Question_ID": "{question_id}",
+          "Score": float,
+          "Rationale": "str"
+        }}
+        ```
+        """
     else:
-        # Format the prompt for general questions
-        prompt = general_prompt_template.format(
-            question=question,
-            ground_truth=ground_truth,
-            answer_categories=answer_categories_str,
-            answer=ground_truth  # assuming ground truth is the answer to evaluate
-        )
+        prompt = f"""
+        You are a computer science professor evaluating a general question.
+        The question is: {question}
+        The ground truth answer is: {ground_truth_answer}
+        The answer provided by the student is: {answer}
 
-        # Create an LLM chain for general evaluation
-        llm_chain = LLMChain(
-            prompt=PromptTemplate.from_template(general_prompt_template),
-            llm="text-davinci-003"  # replace with your preferred LLM model
-        )
+        Based on the following categories and their rubrics:
+        {json.dumps(answer_categories, indent=2)}
 
-    # Generate the evaluation
-    response = llm_chain.run(prompt)
-    response_lines = response.split("\n")
-    score_line = next(line for line in response_lines if line.startswith("Score:"))
-    reasoning_line = next(line for line in response_lines if line.startswith("Reasoning:"))
+        Evaluate the student's answer and return a markdown code snippet with a JSON object formatted to look like:
+        ```json
+        {{
+          "Question_ID": "{question_id}",
+          "Score": float,
+          "Rationale": "str"
+        }}
+        ```
+        """
 
-    score = score_line.split("Score:")[1].strip()
-    reasoning = reasoning_line.split("Reasoning:")[1].strip()
+    response = llm(prompt)
+    # Extract the JSON part from the response
+    start_idx = response.find("```json") + 7
+    end_idx = response.find("```", start_idx)
+    json_response = response[start_idx:end_idx].strip()
 
-    result = {
-        "Question_ID": question_id,
-        "Score": score,
-        "Reasoning": reasoning[:50]  # Ensure reasoning is under 50 words
-    }
-
+    # Parse JSON response
+    result = json.loads(json_response)
     return result
 
 # Example usage
-json_file_path = 'input.json'
-result = evaluate(json_file_path)
-print(json.dumps(result, indent=4))
+answer = "def add(a, b): return a * b"
+evaluation_data = {
+    "Question_ID": "Q1",
+    "Question": "Write a function to add two numbers.",
+    "Question type": "Programming",
+    "Answer_Categories": [
+        ["Excellent", "Function correctly adds two numbers and handles edge cases", 10],
+        ["Good", "Function correctly adds two numbers but does not handle edge cases", 8],
+        ["Fair", "Function has minor issues but works", 5],
+        ["Poor", "Function does not work correctly", 2]
+    ]
+}
+ground_truth_answer = "def add(a, b): return a + b"
+
+result = evaluate(answer, evaluation_data, ground_truth_answer)
+print(result)
