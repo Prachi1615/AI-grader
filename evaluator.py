@@ -1,82 +1,69 @@
-from langchain.llms import OpenAI
-from langchain_experimental.utilities import PythonREPL
 import json
+import re
 
 llm = llm
 
-def evaluate(answer: str, evaluation_data: dict, ground_truth_answer: str):
-        
-    question_id = evaluation_data['Question_ID']
-    question = evaluation_data['Question']
-    question_type = evaluation_data['Question type']
-    answer_categories = evaluation_data['Answer_Categories']
+def evaluate_answer(answer: str, question_data: dict) -> dict:
+    # Extract necessary details from question_data
+    question_id = question_data.get("Question_ID")
+    question = question_data.get("Question")
+    answer_categories = question_data.get("Answer_Categories")
+    ground_truth_answer = question_data.get("Ground truth answer")
+    
+    # Create the prompt
+    prompt = f"""
+    You are a Computer Science professor. You need to evaluate a student's answer based on the provided question, ground truth answer, and answer categories.
 
-    if question_type.lower() == 'programming':
-        repl = PythonREPL()
-        code_execution_result = repl.run(answer)
-        prompt = f"""
-        You are a computer science professor evaluating a programming answer. 
-        The question is: {question}
-        The ground truth answer is: {ground_truth_answer}
-        The answer provided by the student is: {answer}
-        The result of the code execution is: {code_execution_result}
+    Question: {question}
+    Ground truth answer: {ground_truth_answer}
+    
+    Answer categories and rubrics:
+    {answer_categories}
+    
+    Student's answer: {answer}
+    
+    Evaluate the student's answer based on the given rubrics and score it accordingly. Provide a score and a short reasoning (under 50 words).
 
-        Based on the following categories and their rubrics:
-        {json.dumps(answer_categories, indent=2)}
-
-        Evaluate the student's answer and return a markdown code snippet with a JSON object formatted to look like:
-        ```json
-        {{
-          "Question_ID": "{question_id}",
-          "Score": float,
-          "Rationale": "str"
-        }}
-        ```
-        """
-    else:
-        prompt = f"""
-        You are a computer science professor evaluating a general question.
-        The question is: {question}
-        The ground truth answer is: {ground_truth_answer}
-        The answer provided by the student is: {answer}
-
-        Based on the following categories and their rubrics:
-        {json.dumps(answer_categories, indent=2)}
-
-        Evaluate the student's answer and return a markdown code snippet with a JSON object formatted to look like:
-        ```json
-        {{
-          "Question_ID": "{question_id}",
-          "Score": float,
-          "Rationale": "str"
-        }}
-        ```
-        """
-
+    Return a markdown code snippet with a JSON object formatted to look like:
+    ```json
+    {{
+        "Question_ID" : "{question_id}",
+        "Score": float,
+        "Rationale": "str"
+    }}
+    ```
+    """
+    
+    # Get the evaluation from the LLM
     response = llm(prompt)
-    # Extract the JSON part from the response
-    start_idx = response.find("```json") + 7
-    end_idx = response.find("```", start_idx)
-    json_response = response[start_idx:end_idx].strip()
+    
+    # Extract the JSON object from the response using a regular expression
+    match = re.search(r'```json(.*?)```', response, re.DOTALL)
+    if match:
+        json_str = match.group(1).strip()
+        try:
+            result = json.loads(json_str)
+            return result
+        except json.JSONDecodeError:
+            raise ValueError("Unable to parse JSON from LLM response")
+    else:
+        raise ValueError("No JSON object found in LLM response")
 
-    # Parse JSON response
-    result = json.loads(json_response)
-    return result
-
-# Example usage
-answer = "def add(a, b): return a * b"
-evaluation_data = {
-    "Question_ID": "Q1",
-    "Question": "Write a function to add two numbers.",
-    "Question type": "Programming",
+# Example usage:
+question_data = {
+    "Question_ID": "1",
+    "Question": "What is the time complexity of binary search?",
     "Answer_Categories": [
-        ["Excellent", "Function correctly adds two numbers and handles edge cases", 10],
-        ["Good", "Function correctly adds two numbers but does not handle edge cases", 8],
-        ["Fair", "Function has minor issues but works", 5],
-        ["Poor", "Function does not work correctly", 2]
-    ]
+        ["Excellent", "Provides a clear and correct explanation of O(log n)", 10],
+        ["Good", "Mentions O(log n) but lacks detailed explanation", 7],
+        ["Fair", "Attempts to explain but is incorrect or incomplete", 5],
+        ["Poor", "Incorrect answer or irrelevant information", 2]
+    ],
+    "Ground truth answer": "The time complexity of binary search is O(log n)."
 }
-ground_truth_answer = "def add(a, b): return a + b"
 
-result = evaluate(answer, evaluation_data, ground_truth_answer)
+answer = "The time complexity of binary search is O(log n). It divides the search interval in half each time."
+
+# Evaluate the answer
+result = evaluate_answer(answer, question_data)
 print(result)
